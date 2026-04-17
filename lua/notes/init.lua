@@ -44,11 +44,77 @@ function M.open_daily()
   local path = get_daily_path()
   vim.fn.mkdir(vim.fn.fnamemodify(path, ":h"), "p")
   vim.cmd("botright split " .. vim.fn.fnameescape(path))
+  vim.b.is_notes_buffer = true
+end
+
+local function relative_date(date_str)
+  local y, m, d = date_str:match("(%d+)-(%d+)-(%d+)")
+  if not y then return date_str end
+  local then_ts = os.time({ year = tonumber(y), month = tonumber(m), day = tonumber(d) })
+  local now = os.date("*t")
+  local today_ts = os.time({ year = now.year, month = now.month, day = now.day })
+  local days = math.floor((today_ts - then_ts) / 86400)
+  if days == 0 then return "today" end
+  if days == 1 then return "yesterday" end
+  if days < 7 then return days .. " days ago" end
+  if days < 30 then return math.floor(days / 7) .. " weeks ago" end
+  if days < 365 then return math.floor(days / 30) .. " months ago" end
+  return math.floor(days / 365) .. " years ago"
+end
+
+function M.list_notes()
+  local project = get_project()
+  local dir = notes_dir .. "/" .. project
+  if vim.fn.isdirectory(dir) == 0 then
+    vim.notify("No notes for " .. project)
+    return
+  end
+
+  local files = vim.fn.glob(dir .. "/*.md", false, true)
+  if #files == 0 then
+    vim.notify("No notes for " .. project)
+    return
+  end
+  table.sort(files, function(a, b) return a > b end)
+
+  local pickers = require("telescope.pickers")
+  local finders = require("telescope.finders")
+  local conf = require("telescope.config").values
+  local actions = require("telescope.actions")
+  local action_state = require("telescope.actions.state")
+
+  pickers.new({}, {
+    prompt_title = "Notes: " .. project,
+    finder = finders.new_table({
+      results = files,
+      entry_maker = function(path)
+        local date = vim.fn.fnamemodify(path, ":t:r")
+        local rel = relative_date(date)
+        return {
+          value = path,
+          display = string.format("%-14s %s", rel, date),
+          ordinal = rel .. " " .. date,
+          path = path,
+        }
+      end,
+    }),
+    sorter = conf.generic_sorter({}),
+    previewer = conf.file_previewer({}),
+    attach_mappings = function(prompt_bufnr)
+      actions.select_default:replace(function()
+        local entry = action_state.get_selected_entry()
+        actions.close(prompt_bufnr)
+        vim.cmd("edit " .. vim.fn.fnameescape(entry.path))
+      end)
+      return true
+    end,
+  }):find()
 end
 
 function M.setup()
   vim.keymap.set("n", "<leader>jn", M.quick_note, { desc = "Quick note" })
   vim.keymap.set("n", "<leader>jo", M.open_daily, { desc = "Open daily notes" })
+  vim.keymap.set("n", "<leader>jl", M.list_notes, { desc = "List notes" })
 end
 
 return M
